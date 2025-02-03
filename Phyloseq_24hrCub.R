@@ -21,9 +21,7 @@ library(tidyr)
 # Set plotting theme
 theme_set(theme_bw())
 
-
 # Load in data ------------------------------------------------------------
-
 
 #OTU table 
 otu <- read.csv("marti_assigned_read_count_24hrCub.csv", check.names = FALSE)
@@ -79,8 +77,10 @@ samp_phylum <- phylo_object %>%
 phylum_colours <- c('#9e0142', '#d53e4f', '#f46d43', '#fee08b', '#abdda4',
                     '#66c2a5', '#3288bd', '#5e4fa2', '#b5b3bd')
 
-org_phy_col <- c('#593225','#89411E','#B74F15','#D96521','#E48A56',
-                   '#F0B18B','#F9CEB5','#F9E0D1','#212E22' )
+#org_phy_col <- c('#593225','#89411E','#B74F15','#D96521','#E48A56',
+#                   '#F0B18B','#F9CEB5','#F9E0D1','#212E22' )
+
+org_phy_col <- c('#AAAA00', '#77AADD', '#BBCC33', '#EE8866', '#EEDD88', '#FFAABB', '#99DDFF', '#44BB99', '#DDDDDD')
 
 phylum_stacked_bar <- ggplot(
   samp_phylum, aes(x = Sample, y = Abundance, fill = Phylum)) + 
@@ -145,14 +145,26 @@ samp_phylum_filter$Phylum <- factor(samp_phylum_filter$Phylum, levels = phylum_o
 #Plot
 phylum_filter_stacked_bar <- ggplot(
   samp_phylum_filter,
-  aes(x = time_range, y = Abundance, fill = Phylum)) + 
-  geom_bar(stat = "identity", position = "stack") +
+  aes(x = reorder(time_range, start_datetime), y = Abundance, fill = Phylum)) + 
+  geom_bar(stat = "identity", position = "stack", width = 0.82) +
   scale_fill_manual(values = org_phy_col) +
-  theme(axis.title.x = element_blank()) +   # Remove x axis title
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(),
+    axis.line = element_line(color = "black"),
+    strip.text = element_text(size = 12) ) + 
   ylab("Relative Abundance (Phyla > 0.01%)") +
+  xlab("Collection time") +
   #theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=0.5)) +
   facet_wrap(~Time_hrs, scales = "free_x", ncol = 1,
-  labeller = labeller(Time_hrs = c("4" = "4hr Samples", "6" = "6hr Samples")))
+             labeller = labeller(Time_hrs = c("4" = "4hr Samples", "6" = "6hr Samples")))
+
+# Print the plot
+print(phylum_filter_stacked_bar)
+
+# Save the plot as an .svg file with transparent background
+ggsave("Graphs/clear_phylum_stacked_bar.svg", plot = phylum_filter_stacked_bar, device = "svg", bg = "transparent")
+
 
 phyla <- sort(unique(samp_phylum_filter$Phylum))
 
