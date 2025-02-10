@@ -1,12 +1,13 @@
 #!/bin/bash
 #https://bioinf.shenwei.me/taxonkit/usage/
- #I may have a better script than this which I can use now - will need to look
+# Run in taxonkit_environment
+# Run from  taxa_counts/2024_data
 
-#Name of sample, will change this with each analysis
-sample=species_4h_1_2_5
+#MARTi file name
+sample=marti_assignments_noML_lca_0.1_all_levels_2025-FEB-10_10-36-18
 
-#Prep the taxaIDs_counts file
-cut -f 2 -d $',' ${sample}.csv > ${sample}_taxaID.txt
+# Extract just the 2nd col which is the NCBI IDs
+cut -f 2 ${sample}.tsv > ${sample}_taxaID.txt
 
 #Get lineages
 taxonkit lineage ${sample}_taxaID.txt > ${sample}_taxaID_lineage.txt
@@ -23,5 +24,3 @@ cat header.txt ${sample}_taxaID_lineage_sep.csv > ${sample}_taxaID_lineage.csv
 
 #Remove all the intermediate files generated
 rm ${sample}_taxaID.txt ${sample}_taxaID_lineage.txt ${sample}_taxaID_lineage_clean.txt ${sample}_taxaID_lineage_sep.csv header.txt
-
-
