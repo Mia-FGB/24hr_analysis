@@ -1,5 +1,6 @@
 #!/bin/bash
 #https://bioinf.shenwei.me/taxonkit/usage/
+ #I may have a better script than this which I can use now - will need to look
 
 #Name of sample, will change this with each analysis
 sample=species_4h_1_2_5
