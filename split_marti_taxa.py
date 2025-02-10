@@ -40,6 +40,10 @@ def filter_marti_taxa(marti_file):
             summed_df.append(summed_values)
             assigned_df.append(assigned_values)
 
+        # Modify the headers for summed_df and assigned_df
+        summed_df[0] = first_3_cols + [col.split(" ")[0] for col in summed_cols]
+        assigned_df[0] = first_3_cols + [col.split(" ")[0] for col in assigned_cols]
+
         return summed_df, assigned_df
 
 def write_output(data, output_file):
