@@ -4,7 +4,7 @@
 # Run from  taxa_counts/2024_data
 
 #MARTi file name
-sample=marti_assignments_noML_lca_0.1_all_levels_2025-FEB-10_10-36-18
+sample=marti_assignments_lca_0.1_all_levels_2025-FEB-11_9-58-14
 
 # Extract just the 2nd col which is the NCBI IDs
 cut -f 2 ${sample}.tsv > ${sample}_taxaID.txt
