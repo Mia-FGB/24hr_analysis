@@ -88,7 +88,7 @@ phy_colours <- setNames(phy_colours, uniq_phyla)
 samp_phylum <- samp_phylum %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs), 0, Duration_Hrs))
 
 
-#Fubction to plot stacked phylum for duration, month, year
+#Function to plot stacked phylum for duration, month, year
 plot_phylum_by_duration <- function(data, month, year, save_path = "/Users/berelsom/Library/CloudStorage/OneDrive-NorwichBioScienceInstitutes/Air_Samples/24_hour/Graphs/") {
   
   # Ensure Start_Time is in a proper date format (handle NAs if needed)
@@ -137,9 +137,89 @@ plot_phylum_by_duration <- function(data, month, year, save_path = "/Users/berel
   }
 }
 
-
 #Run the function
 plot_phylum_by_duration(samp_phylum, "May", 2024)
 plot_phylum_by_duration(samp_phylum, "June", 2024)
 
+
+# Fungi specific -----
+
+#Filter the dataset to just be fungi
+#First want to filter to genus level 
+samp_genus <- phylo_object_24 %>%
+  tax_glom(taxrank = "genus") %>%                      # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance - compared to pass reads
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance > 0.02) %>%                         # Filter out low abundance taxa diff threshold to before
+  arrange(genus)                                      
+
+
+fungal_phyla <- c("Opisthosporidia", "Chytridiomycota", "Neocallimastigomycota", 
+                  "Blastocladiomycota", "Zoopagomycota", "Mucoromycota", 
+                  "Glomeromycota", "Basidiomycota", "Ascomycota")
+
+fungi_data <- samp_genus %>% 
+  filter(phylum %in% fungal_phyla)
+
+#Get unique phylum in this dataset 
+uniq_genera <- unique(fungi_data$genus)
+#Aplly consistent colours from a colour blind friendly palette
+fung_colours <- colorRampPalette(brewer.pal(8, "Set3"))(length(uniq_genera))
+fung_colours <- setNames(fung_colours, uniq_genera)
+
+#Including N/A's which are negative & Lambda
+fungi_data <- fungi_data %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs), 0, Duration_Hrs))
+
+#Function to plot stacked phylum for duration, month, year
+plot_fungi_by_duration <- function(data, month, year, save_path = "/Users/berelsom/Library/CloudStorage/OneDrive-NorwichBioScienceInstitutes/Air_Samples/24_hour/Graphs/") {
+  
+  # Ensure Start_Time is in a proper date format (handle NAs if needed)
+  data$Start_Time <- as.POSIXct(data$Start_Time, format = "%Y-%m-%d %H:%M", tz = "GMT")
+  
+  # Filter data by the selected month
+  filtered_data <- data %>% filter(Month == month, Year == year)
+  
+  # Order data by Start_Time (ascending or descending)
+  filtered_data <- filtered_data %>% arrange(Start_Time)
+  # Ensure Samples are uniquely ordered by Start_Time
+  filtered_data$Sample <- factor(filtered_data$Sample, levels = unique(filtered_data$Sample))
+  
+  # Get unique durations
+  durations <- unique(filtered_data$Duration_Hrs)
+  
+  # Create folder if it doesn't exist
+  if (!dir.exists(save_path)) {
+    dir.create(save_path)
+  }
+  
+  # Loop through each duration and create a plot
+  for (dur in durations) {
+    plot_data <- filtered_data %>% filter(Duration_Hrs == dur)
+    
+    p <- ggplot(plot_data, aes(x = Sample, y = Abundance, fill = genus)) +  
+      geom_bar(stat = "identity") +
+      geom_text(aes(
+        label = ifelse(is.na(Start_Time), "N/A", format(Start_Time, "%d")),
+        y = 1.05),  # Place labels slightly above the bars
+        angle = 0,  # Keep horizontal
+        size = 3,
+        color = "black") +
+      scale_fill_manual(values = fung_colours) +
+      theme(axis.title.x = element_blank()) +
+      labs(fill = "Genus") +
+      ylab("Relative Abundance (Fungi > 0.02%) \n") +
+      ggtitle(paste("Fungal & Oomycete -", month, year, dur, "(Hrs)")) +
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5))
+    
+    # Save the plot
+    file_name <- paste0(save_path, "Fungi_Genus_", month, year, "_Duration_", dur, ".svg")
+    ggsave(file_name, p, width = 10, height = 6)
+    
+    print(p)  # Display the plot
+  }
+}
+
+#Run the function
+plot_fungi_by_duration(fungi_data, "May", 2024)
+plot_fungi_by_duration(fungi_data, "June", 2024)
 
