@@ -1,16 +1,235 @@
+#Script to plot bar charts showing number of species & proportion that are unique to that sample collection
+
 #Packages
 library(dplyr)
 library(ggplot2)
 library(tidyr)
 library(reshape2)
 library(scales)
+library(lubridate)
 
+#-------------------------------------------------------------------------
+
+# 2024 --------------------------------------------------------------------
+
+#-------------------------------------------------------------------------
+
+#Read in the data ----
+
+#All metadata
+meta <- read.csv("metadata/All metadata - 24 hour collections (2023 & 2024).tsv", sep ='\t')
+
+meta$Duration_min <- as.integer(meta$Duration_min)
+meta$Duration_Hrs <- as.integer(meta$Duration_Hrs)
+
+meta <- meta %>%
+  rename(Sample = Sample_ID)
+
+# Split the 'Sample' column into two new columns 'Month_Time' and 'Repeat', while keeping the original 'Sample' column
+meta <- meta %>%
+  separate(Sample, into = c("Month_Time", "Repeat"), sep = "(?<=\\d)_(?=\\d+$)", extra = "drop", remove = FALSE) 
+
+#convert to date time
+meta$Start_Time <- ymd_hm(meta$Start_Time)
+meta$End_Time <- ymd_hm(meta$End_Time)
+
+meta <- meta %>% arrange(Start_Time)  
+
+#Load in summarised data from MARTi 
+# Generated the summed only read tsv from MARTi output using Scripts/split_marti_taxa.py 
+marti_sum <- read.csv("taxa_counts/2024_data/11_feb_summed.tsv", sep ='\t')
+
+marti_sum <- marti_sum %>% 
+  rename(Rank = NCBI.Rank)
+
+
+#Function to extract Unique & Shared species grouping repeats together ---------
+process_and_plot_species <- function(year, month, duration) {
+  # Filter data for specific year, month, duration, and species rank
+  filtered_data <- marti_meta %>%
+    filter(Duration_Hrs == duration, Month == month, Year == year, Rank == "species")
+  
+  # Convert to presence/absence table
+  spe_presence_data <- filtered_data %>%
+    mutate(`read count` = ifelse(`read count` > 0, 1, 0)) %>%
+    select(Month_Time, Name, `read count`) %>%
+    pivot_wider(names_from = Month_Time, values_from = `read count`, values_fn = list(`read count` = max))
+  
+  # Identify unique species (rows summing to 1)
+  unique_spe <- spe_presence_data$Name[rowSums(spe_presence_data[, -1]) == 1]
+  just_unique_spe <- spe_presence_data[spe_presence_data$Name %in% unique_spe, ]
+  
+  # Convert back to long format
+  unique_sample_name <- melt(just_unique_spe, id.vars = "Name") %>%
+    filter(value == 1)
+  
+  # Count unique species per sample
+  num_uniq_spe <- unique_sample_name %>%
+    group_by(variable) %>%
+    summarise(count = n())
+  
+  # Ensure all samples are represented
+  full_variables <- unique(filtered_data$Month_Time)
+  missing_samples <- data.frame(variable = full_variables, count = 0)
+  num_uniq_spe_comp <- merge(missing_samples, num_uniq_spe, by = "variable", all.x = TRUE) %>%
+    mutate(count.y = ifelse(is.na(count.y), 0, count.y)) %>%
+    select(variable, count.y) %>%
+    rename(Sample = variable, Unique_All_Count = count.y)
+  
+  # Total species per sample
+  numeric_col_presence_data <- spe_presence_data[, 2:ncol(spe_presence_data)]
+  total_species_counts <- data.frame(Sample = colnames(numeric_col_presence_data),
+                                     Total_Species_Count = colSums(numeric_col_presence_data))
+  
+  # Merge with metadata
+  taxa_counts <- inner_join(num_uniq_spe_comp, total_species_counts, by = "Sample") %>%
+    rename(Month_Time = Sample) %>%
+    left_join(meta, by = "Month_Time") %>%
+    filter(Repeat != 2) %>%
+    arrange(Start_Time)
+  
+  # Create the plot
+  uniq_species_plot <- ggplot(taxa_counts, aes(x = Month_Time)) +
+    geom_bar(aes(y = Total_Species_Count, fill = "Total"), stat = "identity", width = 0.82) +
+    geom_bar(aes(y = Unique_All_Count, fill = "Unique"), stat = "identity", width = 0.82) +
+    labs(title = paste("Total and Unique Species per Sample -", month, duration, "hrs (", year, ")"),
+         y = "Number of Species", x = "Collection Time (Hrs)", fill = "Species Count") +
+    scale_fill_manual(values = c("Total" = "#F28241", "Unique" = "#19261C"),
+                      labels = c("Total", "Unique")) +
+    theme_minimal() +
+    theme(axis.title.x = element_blank(),
+          axis.line = element_line(color = "black"),
+          strip.text = element_text(size = 12), 
+          axis.text.x = element_text(angle = 90, hjust = 1))
+  
+  # Save the plot
+  filename <- paste0("Graphs/uniq_sp_", month, "_", duration, "h_", year, ".svg")
+  ggsave(filename, plot = uniq_species_plot, device = "svg", bg = "transparent", width = 6, height = 4,)
+  
+  return(uniq_species_plot)
+}
+
+#Can run the function like this -
+# process_and_plot_species(2024, "June", 6)
+
+years <- c(2023, 2024)  # Define the years of interest
+
+for (year in years) {
+  # Ensure months exist for this year
+  available_months <- unique(marti_meta$Month[marti_meta$Year == year])
+  
+  for (month in available_months) {
+    # Ensure durations exist for this year & month, and drop NAs
+    available_durations <- unique(marti_meta$Duration_Hrs[marti_meta$Year == year & marti_meta$Month == month])
+    available_durations <- na.omit(available_durations)  # Remove NAs
+    
+    # Exclude 24h samples
+    available_durations <- available_durations[available_durations != 24]
+    
+    for (duration in available_durations) {
+      print(paste("Processing:", year, month, duration, "hrs"))
+      process_and_plot_species(year, month, duration)  # Call your function
+    }
+  }
+}
+
+#This function is not working for 2023 data currently, but I think this is due to the df 
+#which should be fixed when it is all exported from MARTi as one
+
+#Ungrouped samples -------------
+#Good for 24 hour samples - but also if I want to plot the others not grouped with repeats
+process_and_plot_ungrouped_samples <- function(year, month, duration) {
+  # Filter data for specific year, month, duration, and species rank
+  filtered_data <- marti_meta %>%
+    filter(Duration_Hrs == duration, Month == month, Year == year, Rank == "species")
+  
+  # Convert to presence/absence table
+  spe_presence_data <- filtered_data %>%
+    mutate(`read count` = ifelse(`read count` > 0, 1, 0)) %>%
+    select(Sample, Name, `read count`) %>%
+    pivot_wider(names_from = Sample, values_from = `read count`, values_fn = list(`read count` = max))
+  
+  # Identify unique species (rows summing to 1)
+  unique_spe <- spe_presence_data$Name[rowSums(spe_presence_data[, -1]) == 1]
+  just_unique_spe <- spe_presence_data[spe_presence_data$Name %in% unique_spe, ]
+  
+  # Convert back to long format
+  unique_sample_name <- melt(just_unique_spe, id.vars = "Name") %>%
+    filter(value == 1)
+  
+  # Count unique species per sample
+  num_uniq_spe <- unique_sample_name %>%
+    group_by(variable) %>%
+    summarise(count = n())
+  
+  # Ensure all samples are represented
+  full_variables <- unique(filtered_data$Sample)
+  missing_samples <- data.frame(variable = full_variables, count = 0)
+  num_uniq_spe_comp <- merge(missing_samples, num_uniq_spe, by = "variable", all.x = TRUE) %>%
+    mutate(count.y = ifelse(is.na(count.y), 0, count.y)) %>%
+    select(variable, count.y) %>%
+    rename(Sample = variable, Unique_All_Count = count.y)
+  
+  # Total species per sample
+  numeric_col_presence_data <- spe_presence_data[, 2:ncol(spe_presence_data)]
+  total_species_counts <- data.frame(Sample = colnames(numeric_col_presence_data),
+                                     Total_Species_Count = colSums(numeric_col_presence_data))
+  
+  # Merge with metadata
+  taxa_counts <- inner_join(num_uniq_spe_comp, total_species_counts, by = "Sample") %>%
+    left_join(meta, by = "Sample") %>%
+    mutate(LPM = as.factor(LPM)) %>%  # Ensure LPM is treated as a factor
+    mutate(LPM = factor(LPM, levels = c("50", "100", "200")))  # Order LPM levels explicitly
+  
+  # Order data by Start_Time 
+  taxa_counts <- taxa_counts %>% arrange(Start_Time)
+  # Ensure Samples are uniquely ordered by Start_Time
+  taxa_counts$Sample <- factor(taxa_counts$Sample, levels = unique(taxa_counts$Sample))
+  
+  # Create the plot
+  uniq_species_plot <- ggplot(taxa_counts, aes(x = Sample)) +
+    geom_bar(aes(y = Total_Species_Count, fill = "Total"), stat = "identity", width = 0.82) +
+    geom_bar(aes(y = Unique_All_Count, fill = "Unique"), stat = "identity", width = 0.82) +
+    
+    labs(title = paste("Total and Unique Species per Sample -", month, duration, "hrs (", year, ")"),
+         y = "Number of Species", x = "Collection Time (Hrs)", fill = "Species Count") +
+   
+     scale_fill_manual(values = c("Total" = "#F28241", "Unique" = "#19261C"),
+                      labels = c("Total", "Unique")) +
+    #Facet by flow rate
+    facet_wrap(~LPM, scales = "free_x") +  # Make x-axis free for each facet
+    #Adding date labels
+    geom_text(aes(
+      label = ifelse(is.na(Start_Time), "N/A", format(Start_Time, "%d")),
+      y = Total_Species_Count + 1),  # Place labels slightly above the bars
+      angle = 0,  # Keep horizontal
+      size = 4,
+      color = "black") +
+    theme_minimal() +
+    theme(axis.title.x = element_blank(),
+          axis.line = element_line(color = "black"),
+          strip.text = element_text(size = 12),
+          axis.text.x = element_text(angle = 90, hjust = 1))
+  
+  # Save the plot
+  filename <- paste0("Graphs/uniq_sp_", month, "_", duration, "h_", year, ".svg")
+  ggsave(filename, plot = uniq_species_plot, device = "svg", bg = "transparent", width = 6, height = 4,)
+  
+  return(uniq_species_plot)
+}
+
+process_and_plot_ungrouped_samples(2024, "June", 24)
+process_and_plot_ungrouped_samples(2024, "May", 24)
+
+# 2023 data ---------------------------------------------------------------
+
+#Older code from 2023, New code can do this quickre and simpler now
 
 #Marti-------------
 #sample meta data - needs more info
-meta <- read.csv("24hr_Cub_meta.csv")
+meta <- read.csv("metadata/2023_metadata/24hr_Cub_meta.csv")
 #Load in summarised data from MARTi - this way can collapse to different taxonomic levels without losing reads
-marti_sum <- read.csv("marti_summed_read_count_24hrCub.csv")
+marti_sum <- read.csv("taxa_counts/2023_data/marti_summed_read_count_24hrCub.csv")
 
 colnames(marti_sum)[colnames(marti_sum) == "NCBI.Rank"] <- "Rank"
 
@@ -126,7 +345,7 @@ num_uniq_spe_6h <- num_uniq_spe_6h %>%
 # Total Species in each Sample ---------------
 numeric_col_presence_data <- spe_presence_data[, 3:ncol(spe_presence_data)]
 total_species_counts <- data.frame(Sample = colnames(numeric_col_presence_data), 
-                    Total_Species_Count = colSums(numeric_col_presence_data))
+                                   Total_Species_Count = colSums(numeric_col_presence_data))
 
 #Merge with the dataframes
 taxa_counts <- inner_join(num_uniq_spe_comp, total_species_counts, by = "Sample")
@@ -156,7 +375,7 @@ start_times <- sapply(start_end_times, function(x) x[1])
 
 # Convert start and end times to POSIXct format
 taxa_count_data$start_datetime <- as.POSIXct(paste(taxa_count_data$Date_collected, start_times),
-                                                format = "%d/%m/%Y %H:%M", tz = "GMT")
+                                             format = "%d/%m/%Y %H:%M", tz = "GMT")
 
 # Calculate end datetime using 'time_hrs'
 taxa_count_data$end_datetime <- taxa_count_data$start_datetime + 
@@ -186,7 +405,7 @@ uniq_species_plot <- ggplot(taxa_count_data, aes(x = reorder(time_range, start_d
     strip.text = element_text(size = 12) )
 
 # Save the plot as an .svg file with transparent background
-ggsave("Graphs/unique_across_all.svg", plot = uniq_species_plot, device = "svg", bg = "transparent")
+ggsave("Graphs/2023_taxa_graphs/unique_across_all.svg", plot = uniq_species_plot, device = "svg", bg = "transparent")
 
 DNA_yield <- ggplot(taxa_count_data, aes(x = reorder(time_range, start_datetime))) + 
   geom_bar(aes(y = Yield), stat = "identity", fill = "#19261C") +
@@ -201,4 +420,11 @@ DNA_yield <- ggplot(taxa_count_data, aes(x = reorder(time_range, start_datetime)
     strip.text = element_text(size = 12) )
 
 # Save the plot as an .svg file with transparent background
-ggsave("Graphs/DNA_yield.svg", plot = DNA_yield, device = "svg", bg = "transparent")
+ggsave("Graphs/2023_taxa_graphs/DNA_yield.svg", plot = DNA_yield, device = "svg", bg = "transparent")
+
+
+
+
+
+
+

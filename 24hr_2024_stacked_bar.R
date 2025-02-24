@@ -8,14 +8,6 @@ library(ggplot2)    # Generate visualization plots
 library(ggsignif)   # Visualize comparisons and the significance between two groups
 library(dplyr)
 library(RColorBrewer)
-library(BiocManager)
-library(Biostrings)
-library(knitr)
-library(scater)
-library(patchwork)
-library(stringr)
-library(fantaxtic)
-library(data.table)
 library(tidyr)
 library(forcats)
 
@@ -137,9 +129,9 @@ plot_phylum_by_duration <- function(data, month, year, save_path = "/Users/berel
   }
 }
 
-#Run the function
-plot_phylum_by_duration(samp_phylum, "May", 2024)
-plot_phylum_by_duration(samp_phylum, "June", 2024)
+#Run the function - Will overweite saved graphs
+# plot_phylum_by_duration(samp_phylum, "May", 2024)
+# plot_phylum_by_duration(samp_phylum, "June", 2024)
 
 
 # Fungi specific -----
