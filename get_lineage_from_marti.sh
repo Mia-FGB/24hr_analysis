@@ -1,10 +1,10 @@
 #!/bin/bash
 #https://bioinf.shenwei.me/taxonkit/usage/
 # Run in taxonkit_environment
-# Run from  taxa_counts/2024_data
+# Run from where the marti file is
 
 #MARTi file name
-sample=marti_assignments_lca_0.1_all_levels_2025-FEB-11_9-58-14
+sample=marti_assignments_lca_0.1_all_levels_23_and_24_2025-FEB-28_16-50-48
 
 # Extract just the 2nd col which is the NCBI IDs
 cut -f 2 ${sample}.tsv > ${sample}_taxaID.txt
