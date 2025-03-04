@@ -12,8 +12,8 @@ cut -f 2 ${sample}.tsv > ${sample}_taxaID.txt
 #Get lineages
 taxonkit lineage ${sample}_taxaID.txt > ${sample}_taxaID_lineage.txt
 
-#Fill in blanks
-taxonkit reformat ${sample}_taxaID_lineage.txt -r Unassigned | cut -f 1,3 > ${sample}_taxaID_lineage_clean.txt
+#Fill in blanks with Higher taxa
+taxonkit reformat ${sample}_taxaID_lineage.txt -r Higher_Taxa | cut -f 1,3 > ${sample}_taxaID_lineage_clean.txt
 
 #Change delimiter
 sed 's/;/\t/g' ${sample}_taxaID_lineage_clean.txt | awk -F'\t' 'BEGIN {OFS=","} { print $1, $2, $3, $4, $5, $6, $7, $8 }' > ${sample}_taxaID_lineage_sep.csv
