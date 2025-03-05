@@ -18,14 +18,15 @@ theme_set(theme_bw())
 
 #OTU table --
 #generated the assigned only read tsv from MARTi output using Scripts/split_marti_taxa.py 
-otu <- read.delim("taxa_counts/2024_data/11_feb_assigned.tsv", check.names = FALSE)
+# Use assigned reads for phyloseq as builds the objevt using lineage data
+otu <- read.delim("taxa_counts/all_24hr_data_assigned.tsv", check.names = FALSE) #2023 & 2024 samples
 otu <- otu[,-c(1,3)]          # remove Name & Rank
 rownames(otu) <- otu[,1]      # Making the rownames the NCBI ID
 otu <- otu[,-1]             # Then drop the repeated col 
 
 #Taxa table --
-#generated the lineages using - /Scripts/get_lineage_from_marti.sh
-taxa <- read.csv("taxa_counts/2024_data/marti_assignments_lca_0.1_all_levels_2025-FEB-11_9-58-14_taxaID_lineage.csv")
+#generated the lineages using - /Scripts/get_lineage_from_marti.sh from the marti output
+taxa <- read.csv("taxa_counts/all_24hr_data_taxaID_lineage.csv")
 taxa<- taxa %>% 
   mutate_if(is.character, as.factor)
 #Remove first row (NCBI ID which is empty)
@@ -37,9 +38,6 @@ taxa <- taxa[,-1]
 #METADATA --
 #Downloaded from google sheet 24hr tab - https://docs.google.com/spreadsheets/d/1Oh7zeWlQewzo9bDmnu5cenVM5a9zddVSlzS5OcUnhaE/edit?gid=196309316#gid=196309316
 meta <- read.delim("metadata/All metadata - 24 hour collections (2023 & 2024).tsv")
-
-meta <- meta %>%
-  filter(Year == 2024)  # Keep only rows where Year is 2024 for this analysis
 
 meta$Duration_min <- as.integer(meta$Duration_min)
 meta$Duration_Hrs <- as.integer(meta$Duration_Hrs)
@@ -56,14 +54,14 @@ tax_mat<- as.matrix(taxa)
 phylo_OTU<- otu_table(otu_mat, taxa_are_rows = TRUE)
 phylo_TAX<- tax_table(tax_mat)
 phylo_samples <- sample_data(meta)
-phylo_object_24 <- phyloseq(phylo_OTU, phylo_TAX, phylo_samples) #Bring them together
+phylo_object <- phyloseq(phylo_OTU, phylo_TAX, phylo_samples) #Bring them together
 
 
 # Plotting -----------------------------------------------------------------
 
 
-#Stacked phyla  ----
-samp_phylum <- phylo_object_24 %>%
+#Collapse to phylum level and filter on abundance  ----
+samp_phylum <- phylo_object %>%
   tax_glom(taxrank = "phylum") %>%                     # agglomerate at phylum level
   transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance - compared to pass reads
   psmelt() %>%                                         # Melt to long format
@@ -72,9 +70,17 @@ samp_phylum <- phylo_object_24 %>%
 
 #Get unique phylum in this dataset 
 uniq_phyla <- unique(samp_phylum$phylum)
-#Aplly consistent colours from a colour blind friendly palette
-phy_colours <- colorRampPalette(brewer.pal(8, "Set3"))(length(uniq_phyla))
-phy_colours <- setNames(phy_colours, uniq_phyla)
+# Get unique phylum names, ensuring 'Higher_Taxa' is last
+ordered_phyla <- sort(setdiff(uniq_phyla, "Higher_Taxa"))  # Alphabetical order
+ordered_phyla <- c(ordered_phyla, "Higher_Taxa")  # Append 'Higher_Taxa' at the end
+
+# Assign colors, keeping the existing ones but setting 'Higher_Taxa' to grey
+phy_colours <- colorRampPalette(brewer.pal(8, "Set3"))(length(ordered_phyla) - 1)  # Exclude 'Higher_Taxa'
+phy_colours <- c(phy_colours, "darkgrey")  # Add grey for 'Higher_Taxa'
+phy_colours <- setNames(phy_colours, ordered_phyla)
+
+# Ensure phylum column is a factor with ordered levels
+samp_phylum$phylum <- factor(samp_phylum$phylum, levels = ordered_phyla)
 
 #Including N/A's which are negative & Lambda
 samp_phylum <- samp_phylum %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs), 0, Duration_Hrs))
@@ -129,16 +135,19 @@ plot_phylum_by_duration <- function(data, month, year, save_path = "/Users/berel
   }
 }
 
-#Run the function - Will overweite saved graphs
-# plot_phylum_by_duration(samp_phylum, "May", 2024)
-# plot_phylum_by_duration(samp_phylum, "June", 2024)
+#Run the function - Will overwrite saved graphs
+plot_phylum_by_duration(samp_phylum, "May", 2024)
+plot_phylum_by_duration(samp_phylum, "June", 2024)
+plot_phylum_by_duration(samp_phylum, "August", 2023)
 
+# Changes to make:
+# Try and add a gap between the two replicate bars
 
 # Fungi specific -----
 
-#Filter the dataset to just be fungi
-#First want to filter to genus level 
-samp_genus <- phylo_object_24 %>%
+#Filter the data to just be fungi
+#First want to filter to genus level - takes a little while to run
+samp_genus <- phylo_object %>%
   tax_glom(taxrank = "genus") %>%                      # agglomerate at phylum level
   transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance - compared to pass reads
   psmelt() %>%                                         # Melt to long format
@@ -155,9 +164,17 @@ fungi_data <- samp_genus %>%
 
 #Get unique phylum in this dataset 
 uniq_genera <- unique(fungi_data$genus)
-#Aplly consistent colours from a colour blind friendly palette
-fung_colours <- colorRampPalette(brewer.pal(8, "Set3"))(length(uniq_genera))
-fung_colours <- setNames(fung_colours, uniq_genera)
+# Get unique phylum names, ensuring 'Higher_Taxa' is last
+ordered_genera <- sort(setdiff(uniq_genera, "Higher_Taxa"))  # Alphabetical order
+ordered_genera <- c(ordered_genera, "Higher_Taxa")  # Append 'Higher_Taxa' at the end
+
+# Assign colors, keeping the existing ones but setting 'Higher_Taxa' to grey
+fung_colours <- colorRampPalette(brewer.pal(8, "Set3"))(length(ordered_genera) - 1)  # Exclude 'Higher_Taxa'
+fung_colours <- c(fung_colours, "darkgrey")  # Add grey for 'Higher_Taxa'
+fung_colours <- setNames(fung_colours, ordered_genera)
+
+# Ensure genus is a factor with correct ordering
+fungi_data$genus <- factor(fungi_data$genus, levels = ordered_genera)
 
 #Including N/A's which are negative & Lambda
 fungi_data <- fungi_data %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs), 0, Duration_Hrs))
@@ -212,6 +229,6 @@ plot_fungi_by_duration <- function(data, month, year, save_path = "/Users/berels
 }
 
 #Run the function
-plot_fungi_by_duration(fungi_data, "May", 2024)
-plot_fungi_by_duration(fungi_data, "June", 2024)
-
+plot_fungi_by_duration(fungi_data, "May",    2024)
+plot_fungi_by_duration(fungi_data, "June",   2024)
+plot_fungi_by_duration(fungi_data, "August", 2023)
