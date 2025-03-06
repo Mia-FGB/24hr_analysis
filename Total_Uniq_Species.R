@@ -1,5 +1,5 @@
 #Script to plot bar charts showing number of species & proportion that are unique to that sample collection
-# Run from /Users/berelsom/OneDrive - Norwich BioScience Institutes/Air_Samples/24_hour
+# Run from setwd("/Users/berelsom/Library/CloudStorage/OneDrive-NorwichBioScienceInstitutes/Air_Samples/24_hour")
 
 #Packages
 library(dplyr)
@@ -28,23 +28,37 @@ meta <- meta %>% arrange(Start_Time)
 
 # Split the 'Sample' column into two new columns 'Month_Time' and 'Repeat', while keeping the original 'Sample' column
 meta <- meta %>%
-  mutate(Month_Time = ifelse(Year == 2024,  
-                             # Existing method for 2024
-                             sub("_(\\d+)$", "", Sample),  
-                             # For 2023: Only process rows where Start_Time and End_Time are not NA
-                             ifelse(
-                               !is.na(Start_Time) & !is.na(End_Time), 
-                               paste0(format(Start_Time, "%B"), "_", 
-                                      format(Start_Time, "%H"), "_", 
-                                      format(End_Time, "%H")), 
-                               NA  # Set Month_Time to NA if Start_Time or End_Time is NA
-                             )))
+  mutate(
+    # Create 'Month_Time' column based on Year
+    Month_Time = ifelse(
+      Year == 2024,  
+      # Existing method for 2024
+      sub("_(\\d+)$", "", Sample),  
+      # For 2023: Only process rows where Start_Time and End_Time are not NA
+      ifelse(
+        !is.na(Start_Time) & !is.na(End_Time), 
+        paste0(format(Start_Time, "%B"), "_", 
+               format(Start_Time, "%H"), "_", 
+               format(End_Time, "%H")),  
+        NA  # Set Month_Time to NA if Start_Time or End_Time is NA
+      )
+    ),
+    
+    # Create 'Repeat' column
+    Repeat = ifelse(
+      Year == 2023, 
+      1,  # For 2023 samples, set Repeat to 1
+      sub(".*_", "", Sample)  # For 2024 samples, extract last part of Sample after the last "_"
+    )
+  )
 
 
 #  Read numbers ---
 read_no <- read.delim("metadata/all_read_numbers.tsv")
 read_no <- read_no  %>%
   rename(Sample = ID)
+
+meta <- left_join(meta, read_no %>% select(Sample, ReadsPassBasecall), by = "Sample")  
 
 # Taxa Counts ---
 # Load in summarised data from MARTi 
@@ -58,7 +72,6 @@ marti_long <- melt(marti_sum, id.vars = c("Name", "NCBI ID", "NCBI Rank"),
                       variable.name = "Sample", value.name = "Read_Count")
 
 # Merge on metadata 
-meta <- left_join(meta, read_no %>% select(Sample, ReadsPassBasecall), by = "Sample")        
 marti_meta <- left_join(marti_long, meta, by = "Sample")  # Merge meta to taxa counts
 
 # Calculate HPM 
@@ -145,7 +158,7 @@ process_and_plot_species <- function(year, month, duration) {
 
   # Save the plot
   filename <- paste0("Graphs/uniq_sp/norm_uniq_sp_", month, "_", duration, "h_", year, ".svg")
-  ggsave(filename, plot = uniq_species_plot, device = "svg", bg = "transparent", width = 12, height = 8,)
+  ggsave(filename, plot = uniq_species_plot, device = "svg", bg = "transparent", width = 10, height = 8,)
   
   return(uniq_species_plot)
 }
@@ -268,7 +281,7 @@ process_and_plot_ungrouped_samples <- function(year, month, duration, x_axis, fa
 
   # Save the plot
   filename <- paste0("Graphs/uniq_sp/norm_uniq_sp_", month, "_", duration, "h_", year, ".svg")
-  ggsave(filename, plot = uniq_species_plot, device = "svg", bg = "transparent", width = 6, height = 4,)
+  ggsave(filename, plot = uniq_species_plot, device = "svg", bg = "transparent", width = 10, height = 8,)
 
   return(uniq_species_plot)
 }
