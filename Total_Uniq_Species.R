@@ -1,4 +1,5 @@
 #Script to plot bar charts showing number of species & proportion that are unique to that sample collection
+# Run from /Users/berelsom/OneDrive - Norwich BioScience Institutes/Air_Samples/24_hour
 
 #Packages
 library(dplyr)
@@ -8,15 +9,9 @@ library(reshape2)
 library(scales)
 library(lubridate)
 
-#-------------------------------------------------------------------------
+# Load in data ------------------------------------------------------------
 
-# 2024 --------------------------------------------------------------------
-
-#-------------------------------------------------------------------------
-
-#Read in the data ----
-
-#All metadata
+# Metadata ---
 meta <- read.csv("metadata/All metadata - 24 hour collections (2023 & 2024).tsv", sep ='\t')
 
 meta$Duration_min <- as.integer(meta$Duration_min)
@@ -25,64 +20,86 @@ meta$Duration_Hrs <- as.integer(meta$Duration_Hrs)
 meta <- meta %>%
   rename(Sample = Sample_ID)
 
-# Split the 'Sample' column into two new columns 'Month_Time' and 'Repeat', while keeping the original 'Sample' column
-meta <- meta %>%
-  separate(Sample, into = c("Month_Time", "Repeat"), sep = "(?<=\\d)_(?=\\d+$)", extra = "drop", remove = FALSE) 
-
 #convert to date time
 meta$Start_Time <- ymd_hm(meta$Start_Time)
 meta$End_Time <- ymd_hm(meta$End_Time)
 
 meta <- meta %>% arrange(Start_Time)  
 
+# Split the 'Sample' column into two new columns 'Month_Time' and 'Repeat', while keeping the original 'Sample' column
+meta <- meta %>%
+  mutate(Month_Time = ifelse(Year == 2024,  
+                             # Existing method for 2024
+                             sub("_(\\d+)$", "", Sample),  
+                             # For 2023: Only process rows where Start_Time and End_Time are not NA
+                             ifelse(
+                               !is.na(Start_Time) & !is.na(End_Time), 
+                               paste0(format(Start_Time, "%B"), "_", 
+                                      format(Start_Time, "%H"), "_", 
+                                      format(End_Time, "%H")), 
+                               NA  # Set Month_Time to NA if Start_Time or End_Time is NA
+                             )))
+
+
 #  Read numbers ---
 read_no <- read.delim("metadata/all_read_numbers.tsv")
 read_no <- read_no  %>%
   rename(Sample = ID)
 
-#Merge read numbers to meta 
-meta <- left_join(meta, read_no, by ="Sample")
-
-#Load in summarised data from MARTi 
+# Taxa Counts ---
+# Load in summarised data from MARTi 
 # Generated the summed only read tsv from MARTi output using Scripts/split_marti_taxa.py 
 marti_sum <- read.delim("taxa_counts/all_24hr_data_summed.tsv", check.names = FALSE)
+
+# Process data ---
 
 # Melt data to long 
 marti_long <- melt(marti_sum, id.vars = c("Name", "NCBI ID", "NCBI Rank"), 
                       variable.name = "Sample", value.name = "Read_Count")
 
 # Merge on metadata 
-marti_meta <- left_join(marti_long, meta, by = "Sample")
+meta <- left_join(meta, read_no %>% select(Sample, ReadsPassBasecall), by = "Sample")        
+marti_meta <- left_join(marti_long, meta, by = "Sample")  # Merge meta to taxa counts
 
 # Calculate HPM 
 marti_meta <- marti_meta %>%
-  mutate(HPM = (Read_Count / ReadsPassBasecall) * 100000)
+  mutate(HPM = (Read_Count / ReadsPassBasecall) * 1000000)
+
+# Filter data on HPM - can change the no of HPM to filter on 
+# Majority of the filtered out samples here are HPM of 0 
+filtered_marti <- marti_meta  %>% 
+  filter(HPM >= 100)
+  
 
 #Function to plot Unique & Shared species grouping repeats together ---------
 process_and_plot_species <- function(year, month, duration) {
+  
   # Filter data for specific year, month, duration, and species rank
-  filtered_data <- marti_meta %>%
-    filter(Duration_Hrs == duration, Month == month, Year == year, `NCBI Rank` == "species")
+  filtered_data <- filtered_marti %>%   #Using the pre-filtered data on HPM
+    filter(Duration_Hrs == duration, Month == month, Year == year, `NCBI Rank` == "species") #Can change this Rank
   
   # Convert to presence/absence table
   spe_presence_data <- filtered_data %>%
     mutate(Read_Count = ifelse(Read_Count > 0, 1, 0)) %>%
     select(Month_Time, Name, Read_Count) %>%
-    pivot_wider(names_from = Month_Time, values_from = Read_Count, values_fn = list(Read_Count = max))
-  
+    pivot_wider(names_from = Month_Time, values_from = Read_Count,
+                values_fn = list(Read_Count = max),
+                values_fill = list(Read_Count = 0)) #Replace NA with 0
+
   # Identify unique species (rows summing to 1)
   unique_spe <- spe_presence_data$Name[rowSums(spe_presence_data[, -1]) == 1]
   just_unique_spe <- spe_presence_data[spe_presence_data$Name %in% unique_spe, ]
-  
+
   # Convert back to long format
   unique_sample_name <- melt(just_unique_spe, id.vars = "Name") %>%
     filter(value == 1)
-  
+
+
   # Count unique species per sample
   num_uniq_spe <- unique_sample_name %>%
     group_by(variable) %>%
     summarise(count = n())
-  
+
   # Ensure all samples are represented
   full_variables <- unique(filtered_data$Month_Time)
   missing_samples <- data.frame(variable = full_variables, count = 0)
@@ -90,43 +107,42 @@ process_and_plot_species <- function(year, month, duration) {
     mutate(count.y = ifelse(is.na(count.y), 0, count.y)) %>%
     select(variable, count.y) %>%
     rename(Sample = variable, Unique_All_Count = count.y)
-  
+
   # Total species per sample
   numeric_col_presence_data <- spe_presence_data[, 2:ncol(spe_presence_data)]
   total_species_counts <- data.frame(Sample = colnames(numeric_col_presence_data),
                                      Total_Species_Count = colSums(numeric_col_presence_data))
-  
+
   # Merge with metadata
   taxa_counts <- inner_join(num_uniq_spe_comp, total_species_counts, by = "Sample") %>%
     rename(Month_Time = Sample) %>%
     left_join(meta, by = "Month_Time") %>%
     # Calculate the average ReadsPassBasecall per sample (grouped by Month_Time)
     group_by(Month_Time) %>%
-    mutate(avg_ReadsPassBasecall = mean(ReadsPassBasecall, na.rm = TRUE)) %>%  
-    ungroup() %>% 
+    mutate(avg_ReadsPassBasecall = mean(ReadsPassBasecall, na.rm = TRUE)) %>%
+    ungroup() %>%
     filter(Repeat != 2) %>% #Just keep one row per Sample
     arrange(Start_Time)
-  
+
   # Normalize counts by total reads (species per million reads)
-  # This doesn't work because I have grouped the repeats together- need to get the averages
   taxa_counts <- taxa_counts %>%
-    mutate(Norm_Unique_Count = (Unique_All_Count / avg_ReadsPassBasecall) * 100000,
-           Norm_Total_Count = (Total_Species_Count / avg_ReadsPassBasecall) * 100000)
-  
+    mutate(Norm_Unique_Count = (Unique_All_Count / avg_ReadsPassBasecall) * 1000000,
+           Norm_Total_Count = (Total_Species_Count / avg_ReadsPassBasecall) * 1000000)
+
   # Create the plot
   uniq_species_plot <- ggplot(taxa_counts, aes(x = Month_Time)) +
     geom_bar(aes(y = Norm_Total_Count, fill = "Total"), stat = "identity", width = 0.82) +
     geom_bar(aes(y = Norm_Unique_Count, fill = "Unique"), stat = "identity", width = 0.82) +
     labs(title = paste("Total and Unique Species per Sample -", month, duration, "hrs (", year, ")"),
-         y = "Number of Species per Million Reads", x = "Collection Time (Hrs)", fill = "Species Count") +
+         y = "Number of Species (per Million Reads)", x = "Collection Time (Hrs)", fill = "Species Count") +
     scale_fill_manual(values = c("Total" = "#F28241", "Unique" = "#19261C"),
                       labels = c("Total", "Unique")) +
     theme_minimal() +
     theme(axis.title.x = element_blank(),
           axis.line = element_line(color = "black"),
-          strip.text = element_text(size = 12), 
+          strip.text = element_text(size = 12),
           axis.text.x = element_text(angle = 90, hjust = 1))
-  
+
   # Save the plot
   filename <- paste0("Graphs/uniq_sp/norm_uniq_sp_", month, "_", duration, "h_", year, ".svg")
   ggsave(filename, plot = uniq_species_plot, device = "svg", bg = "transparent", width = 12, height = 8,)
@@ -141,11 +157,11 @@ years <- c(2024)  # Define the years of interest
 
 for (year in years) {
   # Ensure months exist for this year
-  available_months <- unique(marti_meta$Month[marti_meta$Year == year])
+  available_months <- unique(filtered_marti$Month[filtered_marti$Year == year])
   
   for (month in available_months) {
     # Ensure durations exist for this year & month, and drop NAs
-    available_durations <- unique(marti_meta$Duration_Hrs[marti_meta$Year == year & marti_meta$Month == month])
+    available_durations <- unique(filtered_marti$Duration_Hrs[filtered_marti$Year == year & filtered_marti$Month == month])
     available_durations <- na.omit(available_durations)  # Remove NAs
     
     # Exclude 24h samples
@@ -158,38 +174,40 @@ for (year in years) {
   }
 }
 
-# This function is not working for 2023 data currently
-# This is becuase the month time splitting doesn't work for the 2023 samples
-# 2023 samples aren't repeats so maybe I could work with the code below instead
 
-#Ungrouped samples -------------
-#Need to change this to also be normalised
 
-#Good for 24 hour samples - but also if I want to plot the others not grouped with repeats
-process_and_plot_ungrouped_samples <- function(year, month, duration) {
+# Ungrouped & 2023 sample Function  -------------
+
+
+# Total & Unique plots for samples which don't have repeats 
+
+process_and_plot_ungrouped_samples <- function(year, month, duration, x_axis, facet = FALSE) {
+  
   # Filter data for specific year, month, duration, and species rank
-  filtered_data <- marti_meta %>%
-    filter(Duration_Hrs == duration, Month == month, Year == year, `NCBI Rank` == "species")
+  filtered_data <- filtered_marti %>%   #Using the pre-filtered data on HPM
+    filter(Duration_Hrs == duration, Month == month, Year == year, `NCBI Rank` == "species") #Can change this Rank
   
   # Convert to presence/absence table
   spe_presence_data <- filtered_data %>%
     mutate(Read_Count = ifelse(Read_Count > 0, 1, 0)) %>%
     select(Sample, Name, Read_Count) %>%
-    pivot_wider(names_from = Sample, values_from = Read_Count, values_fn = list(Read_Count = max))
+    pivot_wider(names_from = Sample, values_from = Read_Count,
+                values_fn = list(Read_Count = max),
+                values_fill = list(Read_Count = 0)) #Replace NA with 0
   
   # Identify unique species (rows summing to 1)
   unique_spe <- spe_presence_data$Name[rowSums(spe_presence_data[, -1]) == 1]
   just_unique_spe <- spe_presence_data[spe_presence_data$Name %in% unique_spe, ]
-  
+
   # Convert back to long format
   unique_sample_name <- melt(just_unique_spe, id.vars = "Name") %>%
     filter(value == 1)
-  
+
   # Count unique species per sample
   num_uniq_spe <- unique_sample_name %>%
     group_by(variable) %>%
     summarise(count = n())
-  
+
   # Ensure all samples are represented
   full_variables <- unique(filtered_data$Sample)
   missing_samples <- data.frame(variable = full_variables, count = 0)
@@ -197,40 +215,38 @@ process_and_plot_ungrouped_samples <- function(year, month, duration) {
     mutate(count.y = ifelse(is.na(count.y), 0, count.y)) %>%
     select(variable, count.y) %>%
     rename(Sample = variable, Unique_All_Count = count.y)
-  
+
   # Total species per sample
   numeric_col_presence_data <- spe_presence_data[, 2:ncol(spe_presence_data)]
   total_species_counts <- data.frame(Sample = colnames(numeric_col_presence_data),
                                      Total_Species_Count = colSums(numeric_col_presence_data))
-  
+
   # Merge with metadata
   taxa_counts <- inner_join(num_uniq_spe_comp, total_species_counts, by = "Sample") %>%
     left_join(meta, by = "Sample") %>%
     mutate(LPM = as.factor(LPM)) %>%  # Ensure LPM is treated as a factor
     mutate(LPM = factor(LPM, levels = c("50", "100", "200")))  # Order LPM levels explicitly
-  
-  # Order data by Start_Time 
+
+  # Order data by Start_Time
   taxa_counts <- taxa_counts %>% arrange(Start_Time)
   # Ensure Samples are uniquely ordered by Start_Time
   taxa_counts$Sample <- factor(taxa_counts$Sample, levels = unique(taxa_counts$Sample))
-  
-  #Normalise the data
+
+  #Normalise the data to HPM
   taxa_counts <- taxa_counts %>%
-    mutate(Norm_Unique_Count = (Unique_All_Count / ReadsPassBasecall) * 100000,
-           Norm_Total_Count = (Total_Species_Count / ReadsPassBasecall) * 100000)
-  
+    mutate(Norm_Unique_Count = (Unique_All_Count / ReadsPassBasecall) * 1000000,
+           Norm_Total_Count = (Total_Species_Count / ReadsPassBasecall) * 1000000)
+
   # Create the plot
-  uniq_species_plot <- ggplot(taxa_counts, aes(x = Sample)) +
+  uniq_species_plot <- ggplot(taxa_counts, aes(x = !!sym(x_axis))) + #dynamically set this variable
     geom_bar(aes(y = Norm_Total_Count, fill = "Total"), stat = "identity", width = 0.82) +
     geom_bar(aes(y = Norm_Unique_Count, fill = "Unique"), stat = "identity", width = 0.82) +
-    
+
     labs(title = paste("Total and Unique Species per Sample -", month, duration, "hrs (", year, ")"),
          y = "Number of Species (per million reads)", x = "Collection Time (Hrs)", fill = "Species Count") +
-   
+
      scale_fill_manual(values = c("Total" = "#F28241", "Unique" = "#19261C"),
                       labels = c("Total", "Unique")) +
-    #Facet by flow rate
-    facet_wrap(~LPM, scales = "free_x") +  # Make x-axis free for each facet
     # #Adding date labels
     # geom_text(aes(
     #   label = ifelse(is.na(Start_Time), "N/A", format(Start_Time, "%d")),
@@ -244,23 +260,27 @@ process_and_plot_ungrouped_samples <- function(year, month, duration) {
           strip.text = element_text(size = 12),
           axis.text.x = element_text(angle = 90, hjust = 1))
   
+  # Conditionally add facet_wrap based on the parameter 'facet'
+  if (facet) {
+    uniq_species_plot <- uniq_species_plot +
+      facet_wrap(~LPM, scales = "free_x")  # Facet by flow rate if the argument is TRUE
+  }
+
   # Save the plot
   filename <- paste0("Graphs/uniq_sp/norm_uniq_sp_", month, "_", duration, "h_", year, ".svg")
   ggsave(filename, plot = uniq_species_plot, device = "svg", bg = "transparent", width = 6, height = 4,)
-  
+
   return(uniq_species_plot)
 }
 
-process_and_plot_ungrouped_samples(2024, "June", 24)
-process_and_plot_ungrouped_samples(2024, "May", 24)
+# Run on the 24hour samples from 2024
+process_and_plot_ungrouped_samples(2024, "June", 24, "Sample", facet = TRUE)
+process_and_plot_ungrouped_samples(2024, "May", 24, "Sample") #all 200LPM so don't need faceting
 
-#Trying with 2023 data
-process_and_plot_ungrouped_samples(2023, "August", 2)
-#Currently an issue with this part !!
-# Seems to be no August or 2023 data in marti_meta df
-filtered_data <- marti_meta %>%
-  filter(Duration_Hrs == 2, Year == 2023)
-  # Month == 'August', , `NCBI Rank` == "species")
+# Run on the 2023 data - all 200 so no faceting, different x-axis label 
+process_and_plot_ungrouped_samples(2023, "August", 4, "Month_Time")
+process_and_plot_ungrouped_samples(2023, "August", 6, "Month_Time")
+process_and_plot_ungrouped_samples(2023, c("July","August"), 12, "Month_Time") #naming doesn't quite work with this but the graph does
 
 # OLD CODE ---------------------------------------------------------------
 
