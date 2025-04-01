@@ -1,4 +1,4 @@
-# Script to create radial plots from MARTi read count count data
+# Script to create pathogen plots from MARTi read count count data
 
 #Packages ------
 library(ggplot2)

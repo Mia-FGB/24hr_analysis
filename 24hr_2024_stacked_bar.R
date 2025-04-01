@@ -154,10 +154,10 @@ samp_genus <- phylo_object %>%
   filter(Abundance > 0.02) %>%                         # Filter out low abundance taxa diff threshold to before
   arrange(genus)                                      
 
-
+#Repeat this to include oomycetes!!
 fungal_phyla <- c("Opisthosporidia", "Chytridiomycota", "Neocallimastigomycota", 
                   "Blastocladiomycota", "Zoopagomycota", "Mucoromycota", 
-                  "Glomeromycota", "Basidiomycota", "Ascomycota")
+                  "Glomeromycota", "Basidiomycota", "Ascomycota", 'Oomycota')
 
 fungi_data <- samp_genus %>% 
   filter(phylum %in% fungal_phyla)
