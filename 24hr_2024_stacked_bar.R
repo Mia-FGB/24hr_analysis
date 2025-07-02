@@ -16,6 +16,7 @@ library(RColorBrewer)
 library(tidyr)
 library(forcats)
 library(patchwork)
+library(grid)
 
 # Set plotting theme
 custom_theme <- theme_minimal(base_size = 12) +
@@ -71,7 +72,7 @@ phylo_samples <- sample_data(meta)
 phylo_object <- phyloseq(phylo_OTU, phylo_TAX, phylo_samples) #Bring them together
 
 
-# Plotting -----------------------------------------------------------------
+# Phylum data -----------------------------------------------------------------
 
 
 #Collapse to phylum level and filter on abundance  ----
@@ -100,125 +101,127 @@ samp_phylum$phylum <- factor(samp_phylum$phylum, levels = ordered_phyla)
 samp_phylum <- samp_phylum %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs), 0, Duration_Hrs))
 
 
-#Function to plot stacked phylum for duration, month, year
-plot_phylum_by_duration <- function(data, month, year, save_path = "/Users/berelsom/Library/CloudStorage/OneDrive-NorwichBioScienceInstitutes/Air_Samples/24_hour/Graphs/") {
-  
-  plot_list <- list()
-  
-  # Ensure Start_Time is in a proper date format (handle NAs if needed)
-  data$Start_Time <- as.POSIXct(data$Start_Time, format = "%Y-%m-%d %H:%M", tz = "GMT")
-  
-  # Filter data by the selected month
-  filtered_data <- data %>% filter(Month == month, Year == year)
-  
-  # Get unique durations
-  durations <- unique(filtered_data$Duration_Hrs)
-  
-  # Create folder if it doesn't exist
-  if (!dir.exists(save_path)) {
-    dir.create(save_path)
-  }
-  
-  # Loop through each duration and create a plot
-  for (dur in durations) {
-    plot_data <- filtered_data %>%
-      filter(Duration_Hrs == dur) %>%
-      arrange(Start_Time, Repeat) %>%
-      mutate(
-        phylum = factor(phylum, levels = ordered_phyla),
-        Name = factor(Name, levels = unique(Name))  # enforce desired order
-      )
-    
-    p <- ggplot(plot_data, aes(x = Name, y = Abundance, fill = phylum)) +  
-      geom_bar(stat = "identity") +
-      
-      # To add label of start date at the top of each bar
-      # geom_text(aes(
-      #   label = ifelse(is.na(Start_Time), "N/A", format(Start_Time, "%d")),
-      #   y = 1.05),  # Place labels slightly above the bars
-      #   angle = 0,  # Keep horizontal
-      #   size = 3,
-      #   color = "black") +
-      
-      labs(fill = "Phylum") +
-      ylab("Relative Abundance (Phyla > 0.01%) \n")
-     # ggtitle(paste("Phylum Composition -", month, year, dur, "(Hrs)"))
-    
-    # Adding this separately works better for patchwork
-    p <- p + scale_fill_manual(values = phy_colours, drop = FALSE)
-    
-    # Save the plot
-    file_name <- paste0(save_path, "Phylum_", month, year, "_Duration_", dur, ".svg")
-    ggsave(file_name, p, width = 10, height = 6)
-    
-    # Save to list for patchwork
-    plot_list[[paste0(month, "_", year, "_", dur, "h")]] <- p
-  }
-  return(plot_list)  # Return list of plots
-}
+
+# Fungi data  ---------
+
+#Filter the data to just be fungi
+#First want to filter to genus level - takes a little while to run
+samp_genus <- phylo_object %>%
+  tax_glom(taxrank = "genus") %>%                      # agglomerate at phylum level
+  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance - compared to pass reads
+  psmelt() %>%                                         # Melt to long format
+  filter(Abundance > 0.02) %>%                         # Filter out low abundance taxa diff threshold to before
+  arrange(genus)                                      
+
+#Fungi & Oomycetes being selected
+fungal_phyla <- c("Opisthosporidia", "Chytridiomycota", "Neocallimastigomycota", 
+                  "Blastocladiomycota", "Zoopagomycota", "Mucoromycota", 
+                  "Glomeromycota", "Basidiomycota", "Ascomycota", 'Oomycota')
+
+fungi_data <- samp_genus %>% 
+  filter(phylum %in% fungal_phyla)
+
+#Get unique phylum in this dataset 
+uniq_genera <- unique(fungi_data$genus)
+# Get unique phylum names, ensuring 'Higher_Taxa' is last
+ordered_genera <- sort(setdiff(uniq_genera, "Higher_Taxa"))  # Alphabetical order
+ordered_genera <- c(ordered_genera, "Higher_Taxa")  # Append 'Higher_Taxa' at the end
+
+# Assign colors, keeping the existing ones but setting 'Higher_Taxa' to grey
+fung_colours <- colorRampPalette(brewer.pal(8, "Set3"))(length(ordered_genera) - 1)  # Exclude 'Higher_Taxa'
+fung_colours <- c(fung_colours, "darkgrey")  # Add grey for 'Higher_Taxa'
+fung_colours <- setNames(fung_colours, ordered_genera)
+
+# Ensure genus is a factor with correct ordering
+fungi_data$genus <- factor(fungi_data$genus, levels = ordered_genera)
+
+#Including N/A's which are negative & Lambda
+fungi_data <- fungi_data %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs), 0, Duration_Hrs))
+
+
+
+# Plotting Functions --------
 
 # Updated function that can be used for phylum or fungi genus 
-plot_stacked_bar_duration <- function(data, month, year,
-                                    ylab_text,
-                                    fill_colours,
-                                    save_path = "/Users/berelsom/Library/CloudStorage/OneDrive-NorwichBioScienceInstitutes/Air_Samples/24_hour/Graphs/") {
+plot_taxa_by_duration <- function(data, month, year,
+                                  taxonomic_var,
+                                  fill_colours,
+                                  fill_label,
+                                  ylab_text = "Relative Abundance \n",
+                                  save_prefix = "Taxa",
+                                  save_path = "/Users/berelsom/Library/CloudStorage/OneDrive-NorwichBioScienceInstitutes/Air_Samples/24_hour/Graphs/") {
   
   plot_list <- list()
-  
-  # Ensure Start_Time is in proper date format
   data$Start_Time <- as.POSIXct(data$Start_Time, format = "%Y-%m-%d %H:%M", tz = "GMT")
   
-  # Filter data by month and year
-  filtered_data <- data %>% filter(Month == month, Year == year)
+  filtered_data <- data %>%
+    filter(Month == month, Year == year) %>%
+    arrange(Start_Time, Repeat)
   
-  # Get unique durations
+  # Reorder 'Name' by Start_Time and Repeat
+  filtered_data$Name <- factor(filtered_data$Name, levels = unique(filtered_data$Name))
+  
   durations <- unique(filtered_data$Duration_Hrs)
   
-  # Create folder if it doesn't exist
   if (!dir.exists(save_path)) {
-    dir.create(save_path)
+    dir.create(save_path, recursive = TRUE)
   }
   
   for (dur in durations) {
-    plot_data <- filtered_data %>%
-      filter(Duration_Hrs == dur) %>%
-      arrange(Start_Time, Repeat) %>%
-      mutate(
-        phylum = factor(phylum, levels = ordered_phyla),
-        Name = factor(Name, levels = unique(Name))
-      )
+    plot_data <- filtered_data %>% filter(Duration_Hrs == dur)
     
-    p <- ggplot(plot_data, aes(x = Name, y = Abundance, fill = phylum)) +
+    # Dynamically assign taxonomic column to 'Taxon'
+    plot_data$Taxon <- plot_data[[taxonomic_var]]
+    
+    # Optional ordering
+    if (taxonomic_var == "phylum" && exists("ordered_phyla")) {
+      plot_data$Taxon <- factor(plot_data$Taxon, levels = ordered_phyla)
+    }
+    
+    p <- ggplot(plot_data, aes(x = Name, y = Abundance, fill = Taxon)) +
       geom_bar(stat = "identity") +
-      labs(fill = "Phylum") +
+      scale_fill_manual(values = fill_colours, drop = FALSE) +
+      labs(fill = fill_label) +
       ylab(ylab_text) +
-      scale_fill_manual(values = fill_colours, drop = FALSE)
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5),
+            axis.title.x = element_blank())
     
-    file_name <- paste0(save_path, "Phylum_", month, year, "_Duration_", dur, ".svg")
+    file_name <- paste0(save_path, save_prefix, "_", month, year, "_Duration_", dur, ".svg")
     ggsave(file_name, p, width = 10, height = 6)
     
     plot_list[[paste0(month, "_", year, "_", dur, "h")]] <- p
   }
   
   return(plot_list)
+  View(plot_list)
 }
 
-plot_stacked_bar_duration (samp_phylum, "May", 2024, ylab_text = "Relative Abundance (Phyla > 0.01%)", fill_colours = phy_colours)
-plot_stacked_bar_duration (fungi_data, "May", 2024, ylab_text = "Relative Abundance (Fungi & Omycete > 0.02%)", fill_colours = fung_colours)
+# Call the function and create panel plot for phylum --------
 
-#Run the function - Will overwrite saved graphs and store pltos in lists
-may_plots <- plot_phylum_by_duration(samp_phylum, "May", 2024)
-june_plots <- plot_phylum_by_duration(samp_phylum, "June", 2024)
-august_plots <- plot_phylum_by_duration(samp_phylum, "August", 2023)
+month_years <- c("May" = 2024, "June" = 2024, "August" = 2023)
+plot_results <- list()
 
-# Create panel plot for phylum --------
+for (m in names(month_years)) {
+  y <- month_years[[m]]
+  plot_results[[m]] <- plot_taxa_by_duration(
+    data = samp_phylum,
+    month = m,
+    year = y,
+    taxonomic_var = "phylum",
+    fill_colours = phy_colours,
+    fill_label = "Phylum",
+    ylab_text = "Relative Abundance (Phyla > 0.01%) \n",
+    save_prefix = "Phylum"
+  )
+}
+
 plot_list <- list(
-  p_august_4h_2023 = august_plots[["August_2023_4h"]],
-  p_august_6h_2023 = august_plots[["August_2023_6h"]],
-  p_may_2h_2024 = may_plots[["May_2024_2h"]],
-  p_may_6h_2024 = may_plots[["May_2024_6h"]],
-  p_june_2h_2024 = june_plots[["June_2024_2h"]],
-  p_june_6h_2024 = june_plots[["June_2024_6h"]]
+  p_august_4h_2023 = plot_results[["August"]][["August_2023_4h"]],
+  p_august_6h_2023 = plot_results[["August"]][["August_2023_6h"]],
+  p_may_2h_2024    = plot_results[["May"]][["May_2024_2h"]],
+  p_may_6h_2024    = plot_results[["May"]][["May_2024_6h"]],
+  p_june_2h_2024   = plot_results[["June"]][["June_2024_2h"]],
+  p_june_6h_2024   = plot_results[["June"]][["June_2024_6h"]]
 )
 
 # Create dummy panels with month labels using wrap_elements
@@ -259,28 +262,101 @@ final_plot <- top_row / plot_row1 / plot_row2 +
 
 print(final_plot)
 
-# To save with these axis need to export manually 12 x 8 inches phylum_panel
+# To save with these axis need to export manually as a PDF 12 x 8 inches phylum_panel
 grid.text("Collection Month and Time", x = 0.5, y = 0.02, gp = gpar(fontsize = 12))
 grid.text("Relative Abundance of Phyla (>0.01%)", x = 0.01, y = 0.5, rot = 90, gp = gpar(fontsize = 12))
+
+
+# Calling the function on the fungi data and creating panel -----
+# Same months years as created earlier
+fungi_plot_results <- list()
+
+for (m in names(month_years)) {
+  y <- month_years[[m]]
+  fungi_plot_results[[m]] <- plot_taxa_by_duration(
+    data = fungi_data,
+    month = m,
+    year = y,
+    taxonomic_var = "genus",
+    fill_colours = fung_colours,
+    fill_label = "Genus",
+    ylab_text = "Relative Abundance (Fungi & Oomycete > 0.02%) \n",
+    save_prefix = "Fungi_Genus"
+  )
+}
+
+fungi_plot_list <- list(
+  f_august_4h_2023 = fungi_plot_results[["August"]][["August_2023_4h"]],
+  f_august_6h_2023 = fungi_plot_results[["August"]][["August_2023_6h"]],
+  f_may_2h_2024    = fungi_plot_results[["May"]][["May_2024_2h"]],
+  f_may_6h_2024    = fungi_plot_results[["May"]][["May_2024_6h"]],
+  f_june_2h_2024   = fungi_plot_results[["June"]][["June_2024_2h"]],
+  f_june_6h_2024   = fungi_plot_results[["June"]][["June_2024_6h"]]
+)
+
+# Use same labels as with the phylum plot
+top_f_row <- aug_label + may_label + june_label + plot_layout(ncol = 3)
+
+# Plot rows
+plot_f_row1 <- fungi_plot_list$f_august_4h_2023 + 
+  fungi_plot_list$f_may_2h_2024 + 
+  fungi_plot_list$f_june_2h_2024 + 
+  plot_layout(ncol = 3)
+
+plot_f_row2 <- fungi_plot_list$f_august_6h_2023 + 
+  fungi_plot_list$f_may_6h_2024 + 
+  fungi_plot_list$f_june_6h_2024 + 
+  plot_layout(ncol = 3)
+
+# Combine all
+final_fungi_plot <- top_f_row / plot_f_row1 / plot_f_row2 +
+  plot_layout(heights = c(0.1, 1, 1), guides = "collect") & 
+  theme_minimal(base_size = 12) &
+  theme(
+    legend.position = "right",
+    axis.line = element_line(color = "black", linewidth = 0.3),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    plot.title = element_text(face = "plain"),
+    plot.margin = margin(t = 4, r = 6, b = 10, l = 10)
+  )
+
+print(final_fungi_plot)
+
+# To save with these axis need to export manually 12 x 8 inches phylum_panel
+grid.text("Collection Month and Time", x = 0.5, y = 0.02, gp = gpar(fontsize = 12))
+grid.text("Relative Abundance of Fungi & Oomycetes (>0.02%)", x = 0.01, y = 0.5, rot = 90, gp = gpar(fontsize = 12))
+
 
 # Just the 24 hour samples ----------
 # Filtering the data to only have 200 LPM samples for now 
 
-plot_single_month_24hr_phylum <- function(data, month, year, save_path = "Graphs/") {
+plot_single_month_24hr <- function(data, month, year,
+                                   taxonomic_var = "phylum",
+                                   fill_colours,
+                                   fill_label = "Taxon",
+                                   ylab_text = "Relative Abundance",
+                                   save_prefix = "Taxon_24hr",
+                                   save_path = "Graphs/") {
   
   # Ensure Start_Time is a proper datetime
   data$Start_Time <- as.POSIXct(data$Start_Time, format = "%Y-%m-%d %H:%M", tz = "GMT")
   
-  # Filter for target month/year and 24-hour samples
+  # Filter for 24-hour samples from the selected month/year
   filtered_data <- data %>%
     filter(Year == year, Month == month, Duration_Hrs == 24, LPM == 200) %>%
-    arrange(Start_Time, Repeat) %>%
+    arrange(Start_Time, Repeat)
+  
+  # Create informative sample labels
+  filtered_data <- filtered_data %>%
     mutate(
-      Sample_Label = paste0(format(Start_Time, "%b %d\n%H:%M"), " - 12:00\nRep ", Repeat),
-      phylum = factor(phylum, levels = ordered_phyla)
+      Sample_Label = paste0(format(Start_Time, "%b %d\n%H:%M"), " - 12:00\nRep ", Repeat)
     )
   
-  # Set factor levels for ordering
+  # Order Sample_Label by Start_Time and Repeat
   sample_order <- filtered_data %>%
     distinct(Sample, .keep_all = TRUE) %>%
     arrange(Start_Time, Repeat) %>%
@@ -288,14 +364,22 @@ plot_single_month_24hr_phylum <- function(data, month, year, save_path = "Graphs
   
   filtered_data$Sample_Label <- factor(filtered_data$Sample_Label, levels = sample_order)
   
+  # Assign the taxonomic variable dynamically
+  filtered_data$Taxon <- filtered_data[[taxonomic_var]]
+  
+  # Optional: enforce order (e.g. phylum level)
+  if (taxonomic_var == "phylum" && exists("ordered_phyla")) {
+    filtered_data$Taxon <- factor(filtered_data$Taxon, levels = ordered_phyla)
+  }
+  
   # Plot
-  p <- ggplot(filtered_data, aes(x = Sample_Label, y = Abundance, fill = phylum)) +
+  p <- ggplot(filtered_data, aes(x = Sample_Label, y = Abundance, fill = Taxon)) +
     geom_bar(stat = "identity") +
-    scale_fill_manual(values = phy_colours, drop = FALSE) +
+    scale_fill_manual(values = fill_colours, drop = FALSE) +
     labs(
       x = "Sample Collection Time and Replicate",
-      y = "Relative Abundance of Phyla (>0.01%)",
-      fill = "Phylum"
+      y = ylab_text,
+      fill = fill_label
     ) +
     ggtitle(paste(month, year)) +
     theme_minimal(base_size = 12) +
@@ -308,23 +392,45 @@ plot_single_month_24hr_phylum <- function(data, month, year, save_path = "Graphs
     )
   
   # Save
-  file_name <- paste0(save_path, "Phylum_24hr_", month, "_", year, ".pdf")
+  file_name <- paste0(save_path, save_prefix, "_", month, "_", year, ".pdf")
   ggsave(file_name, p, width = 12, height = 4)
   
   return(p)
 }
 
-# Run the function for each month 
-may_24hr_plot <- plot_single_month_24hr_phylum(samp_phylum, "May", 2024)
-june_24hr_plot <- plot_single_month_24hr_phylum(samp_phylum, "June", 2024)
 
+# Run the function for each month phylum 
+may_24hr_plot <- plot_single_month_24hr(
+  data = samp_phylum,
+  month = "May",
+  year = 2024,
+  taxonomic_var = "phylum",
+  fill_colours = phy_colours,
+  fill_label = "Phylum",
+  ylab_text = "Relative Abundance of Phyla (>0.01%)",
+  save_prefix = "Phylum_24hr"
+)
+
+june_24hr_plot <- plot_single_month_24hr(
+  data = samp_phylum,
+  month = "May",
+  year = 2024,
+  taxonomic_var = "phylum",
+  fill_colours = phy_colours,
+  fill_label = "Phylum",
+  ylab_text = "Relative Abundance of Phyla (>0.01%)",
+  save_prefix = "Phylum_24hr"
+)
+
+
+
+# Remove axis labels
 may_24hr_plot <- may_24hr_plot +
   theme(axis.title.x = element_blank(), axis.title.y = element_blank())
-
 june_24hr_plot <- june_24hr_plot +
   theme(axis.title.y = element_blank())
 
-
+# Combine the months 
 combined_24hr_plot <- may_24hr_plot / june_24hr_plot +
   plot_layout(ncol = 1, heights = c(1, 1), guides = "collect") &
   theme(
@@ -332,97 +438,16 @@ combined_24hr_plot <- may_24hr_plot / june_24hr_plot +
     plot.margin = margin(t = 4, r = 6, b = 10, l = 10)
   )
 
+# Add the y axis centred - then manually export as a PDF 12 x 8
 grid.text("Relative Abundance of Phyla (>0.01%)", x = 0.01, y = 0.5, rot = 90, gp = gpar(fontsize = 12))
- 
 
-# Fungi specific -----
 
-#Filter the data to just be fungi
-#First want to filter to genus level - takes a little while to run
-samp_genus <- phylo_object %>%
-  tax_glom(taxrank = "genus") %>%                      # agglomerate at phylum level
-  transform_sample_counts(function(x) {x/sum(x)} ) %>% # Transform to rel. abundance - compared to pass reads
-  psmelt() %>%                                         # Melt to long format
-  filter(Abundance > 0.02) %>%                         # Filter out low abundance taxa diff threshold to before
-  arrange(genus)                                      
+# Optional code ----
 
-#Fungi & Oomycetes being selected
-fungal_phyla <- c("Opisthosporidia", "Chytridiomycota", "Neocallimastigomycota", 
-                  "Blastocladiomycota", "Zoopagomycota", "Mucoromycota", 
-                  "Glomeromycota", "Basidiomycota", "Ascomycota", 'Oomycota')
-
-fungi_data <- samp_genus %>% 
-  filter(phylum %in% fungal_phyla)
-
-#Get unique phylum in this dataset 
-uniq_genera <- unique(fungi_data$genus)
-# Get unique phylum names, ensuring 'Higher_Taxa' is last
-ordered_genera <- sort(setdiff(uniq_genera, "Higher_Taxa"))  # Alphabetical order
-ordered_genera <- c(ordered_genera, "Higher_Taxa")  # Append 'Higher_Taxa' at the end
-
-# Assign colors, keeping the existing ones but setting 'Higher_Taxa' to grey
-fung_colours <- colorRampPalette(brewer.pal(8, "Set3"))(length(ordered_genera) - 1)  # Exclude 'Higher_Taxa'
-fung_colours <- c(fung_colours, "darkgrey")  # Add grey for 'Higher_Taxa'
-fung_colours <- setNames(fung_colours, ordered_genera)
-
-# Ensure genus is a factor with correct ordering
-fungi_data$genus <- factor(fungi_data$genus, levels = ordered_genera)
-
-#Including N/A's which are negative & Lambda
-fungi_data <- fungi_data %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs), 0, Duration_Hrs))
-
-#Function to plot stacked phylum for duration, month, year
-plot_fungi_by_duration <- function(data, month, year, save_path = "/Users/berelsom/Library/CloudStorage/OneDrive-NorwichBioScienceInstitutes/Air_Samples/24_hour/Graphs/") {
-  
-  # Ensure Start_Time is in a proper date format (handle NAs if needed)
-  data$Start_Time <- as.POSIXct(data$Start_Time, format = "%Y-%m-%d %H:%M", tz = "GMT")
-  
-  # Filter data by the selected month
-  filtered_data <- data %>% filter(Month == month, Year == year)
-  
-  # Order data by Start_Time (ascending or descending)
-  filtered_data <- filtered_data %>% arrange(Start_Time)
-  # Ensure Samples are uniquely ordered by Start_Time
-  filtered_data$Sample <- factor(filtered_data$Sample, levels = unique(filtered_data$Sample))
-  
-  # Get unique durations
-  durations <- unique(filtered_data$Duration_Hrs)
-  
-  # Create folder if it doesn't exist
-  if (!dir.exists(save_path)) {
-    dir.create(save_path)
-  }
-  
-  # Loop through each duration and create a plot
-  for (dur in durations) {
-    plot_data <- filtered_data %>% filter(Duration_Hrs == dur)
-    
-    p <- ggplot(plot_data, aes(x = Sample, y = Abundance, fill = genus)) +  
-      geom_bar(stat = "identity") +
-      geom_text(aes(
-        label = ifelse(is.na(Start_Time), "N/A", format(Start_Time, "%d")),
-        y = 1.05),  # Place labels slightly above the bars
-        angle = 0,  # Keep horizontal
-        size = 3,
-        color = "black") +
-      scale_fill_manual(values = fung_colours) +
-      theme(axis.title.x = element_blank()) +
-      labs(fill = "Genus") +
-      ylab("Relative Abundance (Fungi > 0.02%) \n") +
-      ggtitle(paste("Fungal & Oomycete -", month, year, dur, "(Hrs)")) +
-      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=0.5))
-    
-    # Save the plot
-    file_name <- paste0(save_path, "Fungi_Genus_", month, year, "_Duration_", dur, ".svg")
-    ggsave(file_name, p, width = 10, height = 6)
-    
-    print(p)  # Display the plot
-  }
-}
-
-#Run the function
-plot_fungi_by_duration(fungi_data, "May",    2024)
-plot_fungi_by_duration(fungi_data, "June",   2024)
-plot_fungi_by_duration(fungi_data, "August", 2023)
-
-plot_phylum_by_duration(fungi_data, "May", 2024)
+# To add labels of the date to the bars:
+# geom_text(aes(
+#   label = ifelse(is.na(Start_Time), "N/A", format(Start_Time, "%d")),
+#   y = 1.05),  # Place labels slightly above the bars
+#   angle = 0,  # Keep horizontal
+#   size = 3,
+#   color = "black") 
