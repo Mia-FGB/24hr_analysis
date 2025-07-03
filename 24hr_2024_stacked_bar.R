@@ -7,16 +7,14 @@ setwd("/Users/berelsom/Library/CloudStorage/OneDrive-NorwichBioScienceInstitutes
 
 #Library -----------------------------------------------------------------------
 library(phyloseq)   # Facilitate the import, storage, analysis, and graphical display of microbiome census data.
-library(vegan)      # Analysis of variance using distance matrices using the adonis2 function
-library(Maaslin2)   # Determine multivariable association between metadata and microbial meta-omics features; differential abundance analysis
 library(ggplot2)    # Generate visualization plots 
-library(ggsignif)   # Visualize comparisons and the significance between two groups
 library(dplyr)
 library(RColorBrewer)
 library(tidyr)
 library(forcats)
 library(patchwork)
 library(grid)
+library(tidyr)
 
 # Set plotting theme
 custom_theme <- theme_minimal(base_size = 12) +
@@ -102,7 +100,7 @@ samp_phylum <- samp_phylum %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs),
 
 
 
-# Fungi data  ---------
+# Create Fungi dataframe  ---------
 
 #Filter the data to just be fungi
 #First want to filter to genus level - takes a little while to run
@@ -138,11 +136,29 @@ fungi_data$genus <- factor(fungi_data$genus, levels = ordered_genera)
 #Including N/A's which are negative & Lambda
 fungi_data <- fungi_data %>% mutate(Duration_Hrs = ifelse(is.na(Duration_Hrs), 0, Duration_Hrs))
 
+# Manually add a dummy row for May_12_12_3 so it is plotted as an empty bar in the 24 hour graph 
+meta_missing <- meta %>% filter(Name == "May_12_12_3")
+# Create the row
+dummy_row <- meta_missing %>%
+  mutate(
+    OTU = "dummy_OTU",
+    Abundance = 0,
+    Sample = "May_12_12_3",
+    kingdom = "Eukaryota",
+    phylum = "Ascomycota",
+    class = "Dothideomycetes",
+    order = "Pleosporales",
+    family = "Phaeosphaeriaceae",
+    genus = "Parastagonospora"
+  )
+# Add to fungi data with the needed metadata
+fungi_data <- bind_rows(fungi_data, dummy_row)
 
 
-# Plotting Functions --------
 
-# Updated function that can be used for phylum or fungi genus 
+# Functions --------
+
+# Plot stacked bar chart for each replicate
 plot_taxa_by_duration <- function(data, month, year,
                                   taxonomic_var,
                                   fill_colours,
@@ -367,15 +383,16 @@ plot_single_month_24hr <- function(data, month, year,
   # Assign the taxonomic variable dynamically
   filtered_data$Taxon <- filtered_data[[taxonomic_var]]
   
-  # Optional: enforce order (e.g. phylum level)
+  # Optional: enforce order for phylum or genus
   if (taxonomic_var == "phylum" && exists("ordered_phyla")) {
     filtered_data$Taxon <- factor(filtered_data$Taxon, levels = ordered_phyla)
+  } else if (taxonomic_var == "genus" && exists("ordered_genera")) {
+    filtered_data$Taxon <- factor(filtered_data$Taxon, levels = ordered_genera)
   }
   
   # Plot
   p <- ggplot(filtered_data, aes(x = Sample_Label, y = Abundance, fill = Taxon)) +
     geom_bar(stat = "identity") +
-    scale_fill_manual(values = fill_colours, drop = FALSE) +
     labs(
       x = "Sample Collection Time and Replicate",
       y = ylab_text,
@@ -391,6 +408,8 @@ plot_single_month_24hr <- function(data, month, year,
       plot.title = element_text(hjust = 0.5)
     )
   
+  p <- p + scale_fill_manual(values = fill_colours)
+  
   # Save
   file_name <- paste0(save_path, save_prefix, "_", month, "_", year, ".pdf")
   ggsave(file_name, p, width = 12, height = 4)
@@ -399,7 +418,7 @@ plot_single_month_24hr <- function(data, month, year,
 }
 
 
-# Run the function for each month phylum 
+# Create 24 hr phylum plot -----
 may_24hr_plot <- plot_single_month_24hr(
   data = samp_phylum,
   month = "May",
@@ -413,7 +432,7 @@ may_24hr_plot <- plot_single_month_24hr(
 
 june_24hr_plot <- plot_single_month_24hr(
   data = samp_phylum,
-  month = "May",
+  month = "June",
   year = 2024,
   taxonomic_var = "phylum",
   fill_colours = phy_colours,
@@ -421,8 +440,6 @@ june_24hr_plot <- plot_single_month_24hr(
   ylab_text = "Relative Abundance of Phyla (>0.01%)",
   save_prefix = "Phylum_24hr"
 )
-
-
 
 # Remove axis labels
 may_24hr_plot <- may_24hr_plot +
@@ -438,8 +455,55 @@ combined_24hr_plot <- may_24hr_plot / june_24hr_plot +
     plot.margin = margin(t = 4, r = 6, b = 10, l = 10)
   )
 
-# Add the y axis centred - then manually export as a PDF 12 x 8
+# View plot
+combined_24hr_plot
+
+# Add the y axis centred - then manually export as a PDF 12 x 8, phylum_24hr_panel
 grid.text("Relative Abundance of Phyla (>0.01%)", x = 0.01, y = 0.5, rot = 90, gp = gpar(fontsize = 12))
+
+
+# Create 24 hr fungi plot -----
+
+may_24hr_fung <- plot_single_month_24hr(
+  data = fungi_data,
+  month = "May",
+  year = 2024,
+  taxonomic_var = "genus",
+  fill_colours = fung_colours,
+  fill_label = "Genus",
+  ylab_text = "Relative Abundance of Fungi (>0.02%)",
+  save_prefix = "Fungi_Genus_24hr"
+)
+
+june_24hr_fung <- plot_single_month_24hr(
+  data = fungi_data,
+  month = "June",
+  year = 2024,
+  taxonomic_var = "genus",
+  fill_colours = fung_colours,
+  fill_label = "Genus",
+  ylab_text = "Relative Abundance of Fungi (>0.02%)",
+  save_prefix = "Fungi_Genus_24hr"
+)
+
+# Remove axis labels
+may_24hr_fung <- may_24hr_fung +
+  theme(axis.title.x = element_blank(), axis.title.y = element_blank())
+june_24hr_fung <- june_24hr_fung +
+  theme(axis.title.y = element_blank())
+
+# Combine the months 
+combined_24hr_fung <- may_24hr_fung / june_24hr_fung +
+  plot_layout(ncol = 1, heights = c(1, 1), guides = "collect") &
+  theme(
+    legend.position = "right",
+    plot.margin = margin(t = 4, r = 6, b = 10, l = 10)
+  )
+
+combined_24hr_fung
+
+# Add the y axis centred - then manually export as a PDF 12 x 8, fungi_24hr_panel
+grid.text("Relative Abundance of Fungi & Oomycete Genera (>0.02%)", x = 0.01, y = 0.5, rot = 90, gp = gpar(fontsize = 12))
 
 
 # Optional code ----
