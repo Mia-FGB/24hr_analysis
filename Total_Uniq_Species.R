@@ -21,7 +21,7 @@ meta$Duration_min <- as.integer(meta$Duration_min)
 meta$Duration_Hrs <- as.integer(meta$Duration_Hrs)
 
 meta <- meta %>%
-  rename(Sample = Sample_ID)
+  rename(Sample = Sample_ID, Label = Name)
 
 #convert to date time
 meta$Start_Time <- ymd_hm(meta$Start_Time)
