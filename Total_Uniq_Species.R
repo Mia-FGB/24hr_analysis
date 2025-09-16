@@ -85,7 +85,7 @@ marti_meta <- marti_meta %>%
 # Filter data on HPM 
 # Also filtering on read count
 filtered_marti <- marti_meta  %>% 
-  filter(HPM >= 100, Read_Count > 3)
+  filter(HPM >= 100, Read_Count > 5)
 
 # Alternatively - remove the samples with less than 2,000 reads and filter on HPM
 # filtered_marti <- marti_meta  %>% 
@@ -205,6 +205,7 @@ for (year in years) {
     }
   }
 }
+
 
 
 
